@@ -3,13 +3,11 @@ package hal
 import (
 	"fmt"
 	"log"
-	"sort"
 
-	"github.com/reef-pi/hal"
-	"github.com/reef-pi/rpi/pwm"
+	"github.com/wraul/rpi/pwm"
 )
 
-type channel struct {
+type Channel struct {
 	pin       int
 	name      string
 	driver    pwm.Driver
@@ -17,43 +15,43 @@ type channel struct {
 	v         float64
 }
 
-func (p *channel) Set(value float64) error {
-	if p.frequency <= 0 {
+func (ch Channel) Set(value float64) error {
+	if ch.frequency <= 0 {
 		log.Printf("warning: RPI PWM frequency is 0, defaulting to 150")
-		p.frequency = 150
+		ch.frequency = 150
 	}
 	if value < 0 || value > 100 {
 		return fmt.Errorf("value must be 0-100, got %f", value)
 	}
 
-	exported, err := p.driver.IsExported(p.pin)
+	exported, err := ch.driver.IsExported(ch.pin)
 	if err != nil {
 		return err
 	}
 	if !exported {
-		if err := p.driver.Export(p.pin); err != nil {
+		if err := ch.driver.Export(ch.pin); err != nil {
 			return err
 		}
 	}
-	if err := p.driver.Frequency(p.pin, p.frequency); err != nil {
+	if err := ch.driver.Frequency(ch.pin, ch.frequency); err != nil {
 		return err
 	}
-	if err := p.driver.DutyCycle(p.pin, value); err != nil {
+	if err := ch.driver.DutyCycle(ch.pin, value); err != nil {
 		return err
 	}
-	if err := p.driver.Enable(p.pin); err != nil {
+	if err := ch.driver.Enable(ch.pin); err != nil {
 		return err
 	}
-	p.v = value
+	ch.v = value
 	return nil
 }
 
-func (ch *channel) Close() error { return nil }
-func (ch *channel) LastState() bool {
+func (ch *Channel) Close() error { return nil }
+func (ch *Channel) LastState() bool {
 	return ch.v == 100
 }
 
-func (ch *channel) Write(b bool) error {
+func (ch *Channel) Write(b bool) error {
 	var v float64
 	if b == true {
 		v = 100
@@ -61,26 +59,10 @@ func (ch *channel) Write(b bool) error {
 	return ch.Set(v)
 }
 
-func (p *channel) Name() string {
-	return p.name
+func (ch *Channel) Name() string {
+	return ch.name
 }
 
-func (p *channel) Number() int {
-	return p.pin
-}
-func (r *driver) PWMChannels() []hal.PWMChannel {
-	var chs []hal.PWMChannel
-	for _, ch := range r.channels {
-		chs = append(chs, ch)
-	}
-	sort.Slice(chs, func(i, j int) bool { return chs[i].Name() < chs[j].Name() })
-	return chs
-}
-
-func (r *driver) PWMChannel(p int) (hal.PWMChannel, error) {
-	ch, ok := r.channels[p]
-	if !ok {
-		return nil, fmt.Errorf("unknown pwm channel %d", p)
-	}
-	return ch, nil
+func (ch *Channel) Number() int {
+	return ch.pin
 }

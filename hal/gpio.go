@@ -2,117 +2,78 @@ package hal
 
 import (
 	"fmt"
-	"sort"
 
-	"github.com/reef-pi/embd"
-
-	"github.com/reef-pi/hal"
+	"github.com/warthog618/gpiod"
+	"github.com/warthog618/gpiod/device/rpi"
 )
 
-var (
-	validGPIOPins = map[int]bool{
-		2:  true,
-		3:  true,
-		4:  true,
-		5:  true,
-		6:  true,
-		7:  true,
-		8:  true,
-		9:  true,
-		10: true,
-		11: true,
-		12: true,
-		13: true,
-		14: true,
-		15: true,
-		16: true,
-		17: true,
-		18: true,
-		19: true,
-		20: true,
-		21: true,
-		22: true,
-		23: true,
-		24: true,
-		25: true,
-		26: true,
-		27: true,
-	}
-)
+var validGPIOPins = []int{
+	rpi.GPIO2,
+	rpi.GPIO3,
+	rpi.GPIO5,
+	rpi.GPIO6,
+	rpi.GPIO7,
+	rpi.GPIO8,
+	rpi.GPIO9,
+	rpi.GPIO10,
+	rpi.GPIO11,
+	rpi.GPIO12,
+	rpi.GPIO13,
+	rpi.GPIO14,
+	rpi.GPIO15,
+	rpi.GPIO16,
+	rpi.GPIO17,
+	rpi.GPIO18,
+	rpi.GPIO19,
+	rpi.GPIO20,
+	rpi.GPIO21,
+	rpi.GPIO22,
+	rpi.GPIO23,
+	rpi.GPIO24,
+	rpi.GPIO25,
+	rpi.GPIO26,
+	rpi.GPIO27,
+}
 
-type pin struct {
+type Pin struct {
 	number    int
 	name      string
 	lastState bool
 
-	digitalPin DigitalPin
+	line *gpiod.Line
 }
 
-func (p *pin) Name() string {
+func (p *Pin) Name() string {
 	return p.name
 }
-func (p *pin) Number() int {
+func (p *Pin) Number() int {
 	return p.number
 }
 
-func (p *pin) Close() error {
-	return p.digitalPin.Close()
+func (p *Pin) Close() error {
+	return p.line.Close()
 }
 
-func (p *pin) Read() (bool, error) {
-	if err := p.digitalPin.SetDirection(embd.In); err != nil {
+func (p *Pin) Read() (bool, error) {
+	if err := p.line.Reconfigure(gpiod.AsInput); err != nil {
 		return false, fmt.Errorf("can't read input from channel %d: %v", p.number, err)
 	}
-	v, err := p.digitalPin.Read()
+	v, err := p.line.Value()
 	return v == 1, err
 }
 
-func (p *pin) Write(state bool) error {
-	if err := p.digitalPin.SetDirection(embd.Out); err != nil {
+func (p *Pin) Write(state bool) error {
+	if err := p.line.Reconfigure(gpiod.AsOutput()); err != nil {
 		return fmt.Errorf("can't set output on channel %d: %v", p.number, err)
 	}
-	value := 0
+	var value int
 	if state {
 		value = 1
 	}
 	p.lastState = state
-	return p.digitalPin.Write(value)
+	return p.line.SetValue(value)
 }
 
-func (p *pin) LastState() bool {
+func (p *Pin) LastState() bool {
 	return p.lastState
-}
-
-func (r *driver) DigitalInputPins() []hal.DigitalInputPin {
-	var pins []hal.DigitalInputPin
-	for _, pin := range r.pins {
-		pins = append(pins, pin)
-	}
-	sort.Slice(pins, func(i, j int) bool { return pins[i].Name() < pins[j].Name() })
-	return pins
-}
-
-func (r *driver) DigitalInputPin(p int) (hal.DigitalInputPin, error) {
-	pin, ok := r.pins[p]
-	if !ok {
-		return nil, fmt.Errorf("pin %d unknown", p)
-	}
-	return pin, nil
-}
-
-func (r *driver) DigitalOutputPins() []hal.DigitalOutputPin {
-	var pins []hal.DigitalOutputPin
-	for _, pin := range r.pins {
-		pins = append(pins, pin)
-	}
-	sort.Slice(pins, func(i, j int) bool { return pins[i].Name() < pins[j].Name() })
-	return pins
-}
-
-func (r *driver) DigitalOutputPin(p int) (hal.DigitalOutputPin, error) {
-	pin, ok := r.pins[p]
-	if !ok {
-		return nil, fmt.Errorf("pin %d unknown", p)
-	}
-	return pin, nil
 }

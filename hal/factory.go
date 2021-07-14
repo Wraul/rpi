@@ -3,27 +3,31 @@ package hal
 import (
 	"errors"
 	"fmt"
-	"log"
+	"os"
+	"path"
 	"sync"
 
+	"github.com/warthog618/gpiod"
+
 	"github.com/reef-pi/hal"
-	"github.com/reef-pi/rpi/pwm"
+
+	"github.com/wraul/rpi/pwm"
 )
 
-type rpiFactory struct {
+type Factory struct {
 	meta       hal.Metadata
 	parameters []hal.ConfigParameter
 }
 
-type pinFactory func(int) (DigitalPin, error)
+type pinFactory func(int) (Pin, error)
 
-var rFactory *rpiFactory
+var factory *Factory
 var once sync.Once
 
 // RpiFactory provides the factory to get RPI Driver parameters and RPI Drivers
-func RpiFactory() hal.DriverFactory {
+func RpiFactory() *Factory {
 	once.Do(func() {
-		rFactory = &rpiFactory{
+		factory = &Factory{
 			meta: hal.Metadata{
 				Name:         "rpi",
 				Description:  "hardware peripherals and GPIO channels on the base raspberry pi hardware",
@@ -37,22 +41,22 @@ func RpiFactory() hal.DriverFactory {
 					Default: "200",
 				},
 				{
-					Name:    "Dev Mode",
-					Type:    hal.Boolean,
+					Name:    "GPIO Device",
+					Type:    hal.String,
 					Order:   1,
-					Default: false,
+					Default: "gpiochip0",
 				},
 			},
 		}
 	})
-	return rFactory
+	return factory
 }
 
-func (f *rpiFactory) GetParameters() []hal.ConfigParameter {
+func (f *Factory) GetParameters() []hal.ConfigParameter {
 	return f.parameters
 }
 
-func (f *rpiFactory) ValidateParameters(parameters map[string]interface{}) (bool, map[string][]string) {
+func (f *Factory) ValidateParameters(parameters map[string]interface{}) (bool, map[string][]string) {
 
 	var failures = make(map[string][]string)
 
@@ -70,77 +74,69 @@ func (f *rpiFactory) ValidateParameters(parameters map[string]interface{}) (bool
 		failures["Frequency"] = append(failures["Frequency"], failure)
 	}
 
-	if v, ok = parameters["Dev Mode"]; ok {
-		_, ok := v.(bool)
-		if !ok {
-			failure := fmt.Sprint("Dev Mode is not a boolean. ", v, " was received.")
-			failures["Dev Mode"] = append(failures["Dev Mode"], failure)
+	if v, ok = parameters["GPIO Device"]; ok {
+		path := path.Join("/dev/", v.(string))
+		_, err := os.Stat(path)
+		if err != nil {
+			failure := fmt.Sprintf("Invalid GPIO Device %s. %v", path, err)
+			failures["GPIO Device"] = append(failures["GPIO Device"], failure)
 		}
 	} else {
-		failure := fmt.Sprint("Dev Mode is required parameter, but was not received.")
-		failures["Dev Mode"] = append(failures["Dev Mode"], failure)
+		failure := fmt.Sprint("GPIO Device is a required parameter, but was not received.")
+		failures["GPIO Device"] = append(failures["GPIO Device"], failure)
 	}
 
 	return len(failures) == 0, failures
 }
 
-func (f *rpiFactory) Metadata() hal.Metadata {
+func (f *Factory) Metadata() hal.Metadata {
 	return f.meta
 }
 
-func (f *rpiFactory) NewDriver(parameters map[string]interface{}, hardwareResources interface{}) (hal.Driver, error) {
+func (f *Factory) NewDriver(parameters map[string]interface{}, hardwareResources interface{}) (hal.Driver, error) {
 	if valid, failures := f.ValidateParameters(parameters); !valid {
 		return nil, errors.New(hal.ToErrorString(failures))
 	}
 
-	devMode := parameters["Dev Mode"].(bool)
 	frequency, _ := hal.ConvertToInt(parameters["Frequency"])
+	gpioDev, _ := parameters["GPIO Device"]
 
-	var pwmDriver pwm.Driver
-	var pinFactory pinFactory
-
-	if devMode {
-		log.Println("RPI Driver using DEV Mode")
-		pwmDriver, _ = pwm.Noop()
-		pinFactory = NoopPinFactory
-	} else {
-		pwmDriver = pwm.New()
-		pinFactory = newDigitalPin
+	gpioChip, err := gpiod.NewChip(gpioDev.(string))
+	if err != nil {
+		return nil, fmt.Errorf("can't create GPIO chip: %v", err)
 	}
 
-	return newDriver(pwmDriver, pinFactory, f.meta, frequency)
-}
+	pwmDriver := pwm.New()
 
-func newDriver(pd pwm.Driver, factory pinFactory, meta hal.Metadata, frequency int) (hal.Driver, error) {
-
-	d := &driver{
-		pins:     make(map[int]*pin),
-		channels: make(map[int]*channel),
-		meta:     meta,
+	driver := &Driver{
+		pins:     make(map[int]*Pin),
+		channels: make(map[int]*Channel),
+		meta:     f.meta,
+		chip:     gpioChip,
 	}
 
-	for i := range validGPIOPins {
-		p, err := factory(i)
+	for _, i := range validGPIOPins {
+		l, err := driver.chip.RequestLine(i)
 
 		if err != nil {
 			return nil, fmt.Errorf("can't build hal pin %d: %v", i, err)
 		}
 		name := fmt.Sprintf("GP%d", i)
-		d.pins[i] = &pin{
-			name:       name,
-			number:     i,
-			digitalPin: p,
+		driver.pins[i] = &Pin{
+			name:   name,
+			number: i,
+			line:   l,
 		}
 	}
 
 	for _, p := range []int{0, 1} {
-		ch := &channel{
+		ch := &Channel{
 			pin:       p,
-			driver:    pd,
+			driver:    pwmDriver,
 			frequency: frequency,
 			name:      fmt.Sprintf("%d", p),
 		}
-		d.channels[p] = ch
+		driver.channels[p] = ch
 	}
-	return d, nil
+	return driver, nil
 }
