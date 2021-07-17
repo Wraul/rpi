@@ -52,7 +52,7 @@ type bus struct {
 }
 
 func New() (*bus, error) {
-	f, err := os.OpenFile("/dev/i2c-1", os.O_RDWR, os.ModeExclusive)
+	f, err := os.OpenFile("/dev/i2c-3", os.O_RDWR, os.ModeExclusive)
 	if err != nil {
 		return nil, err
 	}
